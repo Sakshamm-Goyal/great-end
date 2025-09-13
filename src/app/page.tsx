@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState, useEffect, useRef } from "react"
 import WeekendHeader from "@/components/WeekendHeader";
 import ActivityBrowser, { type Activity } from "@/components/ActivityBrowser";
 import WeekendSchedule, { type WeekendActivity } from "@/components/WeekendSchedule";
+import SettingsModal, { type SettingsData } from "@/components/SettingsModal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
@@ -14,6 +15,46 @@ type WeekendTheme = "lazy" | "adventurous" | "family";
 
 export default function Page() {
   const [theme, setTheme] = useState<WeekendTheme>("lazy");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<SettingsData>({
+    theme: "lazy",
+    colorScheme: "system",
+    autoSave: true,
+    defaultDuration: 60,
+    timeFormat: "12h",
+    notifications: true,
+    startTime: "09:00",
+    endTime: "22:00",
+    weekendStart: "saturday",
+    showTutorial: true,
+    compactMode: false,
+  });
+
+  // Load settings from localStorage
+  useEffect(() => {
+    try {
+      const savedSettings = localStorage.getItem("weekendly.settings");
+      if (savedSettings) {
+        const parsed = JSON.parse(savedSettings) as SettingsData;
+        setSettings(prev => ({ ...prev, ...parsed }));
+        if (parsed.theme) setTheme(parsed.theme);
+        if (parsed.colorScheme) applyColorScheme(parsed.colorScheme);
+      }
+    } catch (error) {
+      console.warn("Failed to load settings from localStorage:", error);
+    }
+  }, [applyColorScheme]);
+
+  // Listen for system color scheme changes when using "system" mode
+  useEffect(() => {
+    if (settings.colorScheme === "system") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleChange = () => applyColorScheme("system");
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+  }, [settings.colorScheme, applyColorScheme]);
+
   // Persist theme
   useEffect(() => {
     const t = localStorage.getItem("weekendly.theme") as WeekendTheme | null;
@@ -147,6 +188,61 @@ export default function Page() {
 
   const handleThemeChange = useCallback((t: WeekendTheme) => {
     setTheme(t);
+  }, []);
+
+  const handleSettingsChange = useCallback((newSettings: SettingsData) => {
+    setSettings(newSettings);
+    try {
+      localStorage.setItem("weekendly.settings", JSON.stringify(newSettings));
+    } catch (error) {
+      console.warn("Failed to save settings to localStorage:", error);
+    }
+    // Update theme if it changed
+    if (newSettings.theme !== theme) {
+      setTheme(newSettings.theme);
+    }
+    // Apply color scheme
+    applyColorScheme(newSettings.colorScheme);
+  }, [theme]);
+
+  const applyColorScheme = useCallback((colorScheme: "light" | "dark" | "system") => {
+    const root = document.documentElement;
+    if (colorScheme === "dark") {
+      root.classList.add("dark");
+    } else if (colorScheme === "light") {
+      root.classList.remove("dark");
+    } else {
+      // System - follow system preference
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (prefersDark) {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
+    }
+  }, []);
+
+  const handleResetSettings = useCallback(() => {
+    const defaultSettings: SettingsData = {
+      theme: "lazy",
+      colorScheme: "system",
+      autoSave: true,
+      defaultDuration: 60,
+      timeFormat: "12h",
+      notifications: true,
+      startTime: "09:00",
+      endTime: "22:00",
+      weekendStart: "saturday",
+      showTutorial: true,
+      compactMode: false,
+    };
+    setSettings(defaultSettings);
+    setTheme("lazy");
+    try {
+      localStorage.setItem("weekendly.settings", JSON.stringify(defaultSettings));
+    } catch (error) {
+      console.warn("Failed to reset settings in localStorage:", error);
+    }
   }, []);
 
   const handleScheduleChange = useCallback((list: WeekendActivity[]) => {
@@ -395,7 +491,7 @@ export default function Page() {
           onImport={importPlan}
           onExport={exportPlan}
           onHelp={() => setHelpOpen(true)}
-          onOpenSettings={() => {}}
+          onOpenSettings={() => setSettingsOpen(true)}
           onShare={sharePlan}
           onUndo={undo}
           onRedo={redo}
@@ -597,6 +693,15 @@ export default function Page() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        currentSettings={settings}
+        onSettingsChange={handleSettingsChange}
+        onResetSettings={handleResetSettings}
+      />
     </div>
   );
 }

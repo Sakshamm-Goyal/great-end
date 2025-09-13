@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 
 type ThemeKey = "lazy" | "adventurous" | "family"
 type Difficulty = "easy" | "medium" | "hard"
@@ -200,9 +201,36 @@ export default function ActivityBrowser({
   const [mDuration, setMDuration] = useState<number>(60)
   const [mDifficulty, setMDifficulty] = useState<Difficulty>("easy")
   const [mMoods, setMMoods] = useState<string>("")
+  
+  // State for manually added activities - initialize from localStorage
+  const [manualActivities, setManualActivities] = useState<Activity[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const saved = localStorage.getItem('weekendly.manualActivities')
+      if (saved) {
+        const parsed = JSON.parse(saved) as Activity[]
+        return parsed
+      }
+    } catch (error) {
+      console.warn('Failed to load manual activities from localStorage:', error)
+    }
+    return []
+  })
+
+  // Save manual activities to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('weekendly.manualActivities', JSON.stringify(manualActivities))
+    } catch (error) {
+      console.warn('Failed to save manual activities to localStorage:', error)
+    }
+  }, [manualActivities])
+
+  // Combine default activities with manually added ones
+  const allActivities = useMemo(() => [...activities, ...manualActivities], [activities, manualActivities])
 
   const categories = useMemo(() => {
-    const unique = Array.from(new Set(activities.map((a) => a.category)))
+    const unique = Array.from(new Set(allActivities.map((a) => a.category)))
     // Ensure known categories appear first in a pleasing order
     const order = ["Relax", "Adventure", "Family"]
     unique.sort((a, b) => {
@@ -214,11 +242,11 @@ export default function ActivityBrowser({
       return ia - ib
     })
     return unique
-  }, [activities])
+  }, [allActivities])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return activities.filter((a) => {
+    return allActivities.filter((a) => {
       if (selectedCategories.length && !selectedCategories.includes(a.category)) return false
       if (!q) return true
       return (
@@ -228,7 +256,7 @@ export default function ActivityBrowser({
         a.moods.some((m) => m.toLowerCase().includes(q))
       )
     })
-  }, [activities, query, selectedCategories])
+  }, [allActivities, query, selectedCategories])
 
   useEffect(() => {
     if (activeTheme === "lazy") {
@@ -247,6 +275,19 @@ export default function ActivityBrowser({
     setSelectedCategories((prev) =>
       prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
     )
+  }
+
+  function resetToDefaults() {
+    setManualActivities([])
+    setQuery("")
+    setSelectedCategories([])
+    setActiveTheme(null)
+    // Clear localStorage
+    try {
+      localStorage.removeItem('weekendly.manualActivities')
+    } catch (error) {
+      console.warn('Failed to clear manual activities from localStorage:', error)
+    }
   }
 
   function handleDragStart(e: React.DragEvent, activity: Activity) {
@@ -312,6 +353,7 @@ export default function ActivityBrowser({
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null)
   const [selectedDay, setSelectedDay] = useState<'saturday' | 'sunday'>('saturday')
   const [selectedTime, setSelectedTime] = useState('09:00')
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
 
   function handleAddClick(a: Activity) {
     setSelectedActivity(a)
@@ -375,12 +417,8 @@ export default function ActivityBrowser({
           type="button"
           variant="secondary"
           className="gap-2"
-          onClick={() => {
-            setQuery("")
-            setSelectedCategories([])
-            setActiveTheme(null)
-          }}
-          aria-label="Clear filters"
+          onClick={() => setResetDialogOpen(true)}
+          aria-label="Reset to defaults"
         >
           <TimerReset className="size-4" aria-hidden="true" />
           Reset
@@ -420,8 +458,9 @@ export default function ActivityBrowser({
       </div>
 
       <div className="mb-3">
-        <div className="flex flex-wrap gap-2">
-          <span className="text-xs font-medium text-muted-foreground">Filter by category:</span>
+        <div className="flex flex-wrap gap-2 items-center justify-between">
+          <div className="flex flex-wrap gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Filter by category:</span>
           {categories.map((cat) => {
             const meta = categoryMeta[cat] ?? {
               icon: LayoutGrid,
@@ -447,6 +486,12 @@ export default function ActivityBrowser({
               </button>
             )
           })}
+          </div>
+          {manualActivities.length > 0 && (
+            <div className="text-xs text-muted-foreground">
+              {manualActivities.length} custom activit{manualActivities.length === 1 ? 'y' : 'ies'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -495,7 +540,14 @@ export default function ActivityBrowser({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="min-w-0 flex-1">
-                        <h3 className="text-lg font-semibold leading-tight text-foreground mb-1">{a.title}</h3>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-lg font-semibold leading-tight text-foreground">{a.title}</h3>
+                          {a.id.startsWith('manual-') && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-xs font-medium">
+                              Custom
+                            </span>
+                          )}
+                        </div>
                         <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
                           {a.description}
                         </p>
@@ -564,7 +616,7 @@ export default function ActivityBrowser({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Add activity manually</DialogTitle>
-            <DialogDescription>Create a custom activity and add it to your plan.</DialogDescription>
+            <DialogDescription>Create a custom activity and add it to the activity browser.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
@@ -640,7 +692,8 @@ export default function ActivityBrowser({
                     moods,
                     icon: mCategory === "Adventure" ? "RollerCoaster" : mCategory === "Family" ? "SquareMenu" : "Sunset",
                   }
-                  onAddActivity?.(newAct)
+                  // Add to manual activities list so it shows in the browser
+                  setManualActivities(prev => [...prev, newAct])
                   setManualOpen(false)
                   setMTitle("")
                   setMDesc("")
@@ -650,7 +703,7 @@ export default function ActivityBrowser({
                   setMMoods("")
                 }}
               >
-                Add to schedule
+                Add to browser
               </Button>
             </div>
           </div>
@@ -740,6 +793,24 @@ export default function ActivityBrowser({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Reset Confirmation Dialog */}
+      <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset to defaults?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove all your custom activities and reset filters. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={resetToDefaults}>
+              Reset
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }
