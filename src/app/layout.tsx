@@ -8,8 +8,6 @@ export const metadata: Metadata = {
   title: "Weekendly - Weekend Planner",
   description: "Plan your perfect weekend with activities, schedules, and more. Works offline and handles 50+ activities with ease.",
   manifest: "/manifest.json",
-  themeColor: "#0ea5e9",
-  viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
   icons: {
     icon: "/favicon.ico",
     apple: "/favicon.ico",
@@ -30,6 +28,14 @@ export const metadata: Metadata = {
     title: "Weekendly - Weekend Planner",
     description: "Plan your perfect weekend with activities, schedules, and more.",
   },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#0ea5e9",
 };
 
 export default function RootLayout({
