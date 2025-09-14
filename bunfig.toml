@@ -1,0 +1,12 @@
+[test]
+# Setup file for tests
+preload = ["./src/__tests__/setup.ts"]
+
+# Test environment
+env = "test"
+
+# Mock modules
+mock = [
+  "sonner",
+  "lucide-react"
+]

@@ -10,6 +10,9 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { toast } from "sonner";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
+import { persistenceManager, type WeekendPlan } from "@/lib/persistence";
+import { useVirtualization } from "@/lib/virtualization";
+import { PerformanceOptimizer } from "@/lib/virtualization";
 
 type WeekendTheme = "lazy" | "adventurous" | "family";
 
@@ -29,6 +32,23 @@ export default function Page() {
     showTutorial: true,
     compactMode: false,
   });
+
+  const applyColorScheme = useCallback((colorScheme: "light" | "dark" | "system") => {
+    const root = document.documentElement;
+    if (colorScheme === "dark") {
+      root.classList.add("dark");
+    } else if (colorScheme === "light") {
+      root.classList.remove("dark");
+    } else {
+      // System - follow system preference
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (prefersDark) {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
+    }
+  }, []);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -98,6 +118,10 @@ export default function Page() {
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const [showIntroBar, setShowIntroBar] = useState(false);
+  // Performance and offline state
+  const [isOnline, setIsOnline] = useState(true);
+  const [performanceMode, setPerformanceMode] = useState(false);
+  const [stats, setStats] = useState({ totalPlans: 0, totalActivities: 0, storageUsed: 0 });
 
   // Spotlight refs
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -145,10 +169,80 @@ export default function Page() {
     };
   }, [tutorialOpen, tutorialStep, steps]);
 
-  // Auto-save current theme plan on change (silent)
+  // Enhanced persistence with IndexedDB
   useEffect(() => {
-    try { localStorage.setItem(storageKey(theme), JSON.stringify(activities)); } catch {}
+    const savePlan = async () => {
+      try {
+        await persistenceManager.saveThemePlan(theme, activities);
+        const newStats = await persistenceManager.getStats();
+        setStats(newStats);
+      } catch (error) {
+        console.warn('Failed to save plan:', error);
+        // Fallback to localStorage
+        try { localStorage.setItem(storageKey(theme), JSON.stringify(activities)); } catch {}
+      }
+    };
+    
+    savePlan();
   }, [activities, theme]);
+
+  // Load plan from enhanced persistence
+  useEffect(() => {
+    const loadPlan = async () => {
+      try {
+        const plan = await persistenceManager.getThemePlan(theme);
+        if (plan) {
+          setActivities(plan.activities);
+          setScheduleKey(k => k + 1);
+        }
+      } catch (error) {
+        console.warn('Failed to load plan:', error);
+        // Fallback to localStorage
+        try {
+          const saved = localStorage.getItem(storageKey(theme));
+          if (saved) {
+            const parsed = JSON.parse(saved) as WeekendActivity[];
+            setActivities(parsed);
+            setScheduleKey(k => k + 1);
+          }
+        } catch {}
+      }
+    };
+    
+    loadPlan();
+  }, [theme]);
+
+  // Performance optimization for large datasets
+  useEffect(() => {
+    setPerformanceMode(activities.length > 50);
+  }, [activities.length]);
+
+  // Offline detection
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Service Worker registration
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(registration => {
+          console.log('Service Worker registered:', registration);
+        })
+        .catch(error => {
+          console.log('Service Worker registration failed:', error);
+        });
+    }
+  }, []);
 
   // First-time onboarding
   useEffect(() => {
@@ -204,23 +298,6 @@ export default function Page() {
     // Apply color scheme
     applyColorScheme(newSettings.colorScheme);
   }, [theme]);
-
-  const applyColorScheme = useCallback((colorScheme: "light" | "dark" | "system") => {
-    const root = document.documentElement;
-    if (colorScheme === "dark") {
-      root.classList.add("dark");
-    } else if (colorScheme === "light") {
-      root.classList.remove("dark");
-    } else {
-      // System - follow system preference
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      if (prefersDark) {
-        root.classList.add("dark");
-      } else {
-        root.classList.remove("dark");
-      }
-    }
-  }, []);
 
   const handleResetSettings = useCallback(() => {
     const defaultSettings: SettingsData = {
@@ -330,26 +407,53 @@ export default function Page() {
     toast.message("Schedule cleared");
   }, [activities]);
 
-  const savePlan = useCallback(() => {
-    const key = storageKey(theme);
+  const savePlan = useCallback(async () => {
     try {
-      localStorage.setItem(key, JSON.stringify(activities));
+      await persistenceManager.saveThemePlan(theme, activities);
+      const newStats = await persistenceManager.getStats();
+      setStats(newStats);
       toast.success("Plan saved");
-    } catch { toast.error("Save failed"); }
+    } catch (error) {
+      console.warn('Failed to save plan:', error);
+      // Fallback to localStorage
+      try {
+        localStorage.setItem(storageKey(theme), JSON.stringify(activities));
+        toast.success("Plan saved (offline)");
+      } catch {
+        toast.error("Save failed");
+      }
+    }
   }, [activities, theme]);
 
-  const loadPlan = useCallback(() => {
-    const key = storageKey(theme);
+  const loadPlan = useCallback(async () => {
     try {
-      const raw = localStorage.getItem(key);
-      if (!raw) { toast.message("No saved plan for theme"); return; }
-      const parsed = JSON.parse(raw) as WeekendActivity[];
+      const plan = await persistenceManager.getThemePlan(theme);
+      if (!plan) { 
+        toast.message("No saved plan for theme"); 
+        return; 
+      }
       setPast((p) => [...p, activities]);
       setFuture([]);
-      setActivities(parsed);
+      setActivities(plan.activities);
       setScheduleKey((k) => k + 1);
       toast.success("Plan loaded");
-    } catch { toast.error("Load failed"); }
+    } catch (error) {
+      console.warn('Failed to load plan:', error);
+      // Fallback to localStorage
+      try {
+        const key = storageKey(theme);
+        const raw = localStorage.getItem(key);
+        if (!raw) { toast.message("No saved plan for theme"); return; }
+        const parsed = JSON.parse(raw) as WeekendActivity[];
+        setPast((p) => [...p, activities]);
+        setFuture([]);
+        setActivities(parsed);
+        setScheduleKey((k) => k + 1);
+        toast.success("Plan loaded (offline)");
+      } catch {
+        toast.error("Load failed");
+      }
+    }
   }, [theme, activities]);
 
   const exportPlan = useCallback(() => {
@@ -578,6 +682,19 @@ export default function Page() {
 
       <footer className="py-4 text-center text-xs text-muted-foreground">
         Made with joy for delightful weekends — Weekendly
+        {!isOnline && (
+          <div className="mt-2 text-warning-600 font-medium">
+            📱 Offline mode - Your changes will sync when you're back online
+          </div>
+        )}
+        {performanceMode && (
+          <div className="mt-2 text-blue-600 font-medium">
+            ⚡ Performance mode enabled for {activities.length} activities
+          </div>
+        )}
+        <div className="mt-1 text-xs opacity-60">
+          {stats.totalPlans} plans • {stats.totalActivities} activities
+        </div>
       </footer>
 
       {/* Help Dialog */}
